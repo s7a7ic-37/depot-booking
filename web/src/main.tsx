@@ -1,0 +1,149 @@
+import { useEffect, useState } from "react";
+import type { FormEvent } from "react";
+import { createRoot } from "react-dom/client";
+import "./style.css";
+
+type Booking = { id: number; bay: number; hour: number; reference: string };
+type Board = {
+  date: string;
+  firstDay: string;
+  lastDay: string;
+  bayCount: number;
+  firstHour: number;
+  lastHour: number;
+  availableFrom: number;
+  bookings: Booking[];
+};
+
+const clockLabel = (hour: number) => String(hour).padStart(2, "0") + ":00";
+const dayLabel = new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "short", timeZone: "UTC" });
+
+async function getBoard(date = ""): Promise<Board> {
+  const params = date ? "?" + new URLSearchParams({ date }) : "";
+  const response = await fetch("/api/board" + params, { cache: "no-store", signal: AbortSignal.timeout(10_000) });
+  if (!response.ok) throw new Error("Could not load the schedule.");
+  return response.json();
+}
+
+function App() {
+  const [board, setBoard] = useState<Board | null>(null);
+  const [bay, setBay] = useState(1);
+  const [hour, setHour] = useState<number | null>(null);
+  const [reference, setReference] = useState("");
+  const [busy, setBusy] = useState(true);
+  const [message, setMessage] = useState("");
+  const [failed, setFailed] = useState(false);
+
+  async function loadSchedule(date?: string) {
+    setBusy(true);
+    setFailed(false);
+    setMessage("Loading schedule…");
+    try {
+      setBoard(await getBoard(date));
+      setHour(null);
+      setMessage("");
+    } catch {
+      setFailed(true);
+      setMessage("Could not load the schedule. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  useEffect(() => { void loadSchedule(); }, []);
+
+  async function reserve(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy || !board || hour === null) return;
+    setBusy(true);
+    setFailed(false);
+    setMessage("Saving booking…");
+    try {
+      const response = await fetch("/api/bookings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date: board.date, bay, hour, reference }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (response.status === 409) {
+        setFailed(true);
+        setHour(null);
+        setMessage("This slot was just booked. Choose another time.");
+        setBoard(await getBoard(board.date));
+      } else if (response.ok) {
+        const saved: Booking = await response.json();
+        setBoard({ ...board, bookings: [...board.bookings, saved] });
+        setMessage("Booked bay " + saved.bay + " at " + clockLabel(saved.hour) + " for " + saved.reference + ".");
+        setHour(null);
+        setReference("");
+      } else {
+        const error = await response.json().catch(() => null);
+        setFailed(true);
+        setMessage(error?.message || "Could not confirm the booking. Check the schedule before trying again.");
+      }
+    } catch {
+      setFailed(true);
+      setMessage("Could not confirm the booking. Check the schedule before trying again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const hours = board ? Array.from({ length: board.lastHour - board.firstHour + 1 }, (_, i) => board.firstHour + i) : [];
+  const booked = new Set(board?.bookings.filter((slot) => slot.bay === bay).map((slot) => slot.hour));
+  const selection = hour === null ? "Choose a time on the schedule." : "Bay " + bay + " · " + clockLabel(hour) + "–" + clockLabel(hour + 1);
+
+  return <>
+    <header><div className="wrap header-line">
+      <a className="brand" href="/"><img src="/favicon.svg" alt="" width="28" height="28" />Depot Booking</a>
+      <a href="https://portfolio.artemislab.co.uk/#projects">← All projects</a>
+    </div></header>
+    <main className="wrap">
+      <div className="intro">
+        <h1>Loading bay schedule</h1>
+        <p>Reserve an hour for a delivery or collection.</p>
+      </div>
+      <p className="message" role="status" data-failed={failed}>{message || (busy ? "Loading schedule…" : "")}</p>
+      {!board && !busy && <button type="button" onClick={() => void loadSchedule()}>Retry schedule</button>}
+      {board && <div className="layout">
+        <section className="panel" aria-labelledby="slots-heading">
+          <div className="date-line">
+            <div><label htmlFor="date">Booking date</label>
+              <input id="date" type="date" value={board.date} min={board.firstDay} max={board.lastDay}
+                disabled={busy} onChange={(event) => { if (event.target.value) void loadSchedule(event.target.value); }} />
+            </div>
+            <button type="button" disabled={busy} onClick={() => void loadSchedule(board.date)}>Refresh schedule</button>
+          </div>
+          <div className="bay-list" role="group" aria-label="Loading bay">
+            {Array.from({ length: board.bayCount }, (_, i) => i + 1).map((number) =>
+              <button key={number} type="button" disabled={busy} aria-pressed={bay === number}
+                onClick={() => { setBay(number); setHour(null); }}>Bay {number}</button>
+            )}
+          </div>
+          <h2 id="slots-heading">Time slots</h2>
+          <p className="schedule-date">{dayLabel.format(new Date(board.date + "T00:00:00Z"))} · UK time</p>
+          <div className="slots">
+            {hours.map((time) => {
+              const state = booked.has(time) ? "Booked" : time < board.availableFrom ? "Elapsed" : "Available";
+              return <button key={time} type="button" disabled={busy || state !== "Available"}
+                aria-label={"Bay " + bay + ", " + clockLabel(time) + ", " + state}
+                aria-pressed={hour === time} onClick={() => setHour(time)}>
+                <span>{clockLabel(time)}</span><small>{state}</small>
+              </button>;
+            })}
+          </div>
+        </section>
+        <form className="panel booking-form" onSubmit={reserve}>
+          <h2>Reserve a slot</h2>
+          <p className="selection">{selection}</p>
+          <label htmlFor="reference">Load reference</label>
+          <input id="reference" name="reference" placeholder="e.g. LOAD-104" maxLength={32} required
+            value={reference} disabled={busy} onChange={(event) => setReference(event.target.value)} />
+          <button className="primary" disabled={busy || hour === null || !reference.trim()}>Reserve slot</button>
+        </form>
+      </div>}
+    </main>
+  </>;
+}
+
+createRoot(document.getElementById("app")!).render(<App />);
