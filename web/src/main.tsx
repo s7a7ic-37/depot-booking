@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { createRoot } from "react-dom/client";
-import { demoBoard, demoReserve } from "./demo";
+import { demoBoard, demoCancel, demoReserve } from "./demo";
 import type { Board, Booking, BookingInput } from "./demo";
 import "./style.css";
 
@@ -86,6 +86,31 @@ function App() {
     }
   }
 
+  async function cancel(booking: Booking) {
+    if (busy || !board || !window.confirm("Cancel bay " + booking.bay + " at " + clockLabel(booking.hour) + "?")) return;
+    setBusy(true);
+    setFailed(false);
+    setMessage("Cancelling booking…");
+    try {
+      const response = browserDemo
+        ? await demoCancel(board.date, booking)
+        : await fetch("/api/bookings/" + booking.id, { method: "DELETE", signal: AbortSignal.timeout(10_000) });
+      if (response.status === 204) {
+        setBoard({ ...board, bookings: board.bookings.filter((row) => row.id !== booking.id) });
+        setMessage("Booking cancelled. The slot is available again.");
+      } else {
+        setBoard(await getBoard(board.date));
+        setFailed(true);
+        setMessage("That booking could not be cancelled. The schedule has been refreshed.");
+      }
+    } catch {
+      setFailed(true);
+      setMessage("Could not confirm cancellation. Refresh the schedule to check the slot.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const hours = board ? Array.from({ length: board.lastHour - board.firstHour + 1 }, (_, i) => board.firstHour + i) : [];
   const booked = new Set(board?.bookings.filter((slot) => slot.bay === bay).map((slot) => slot.hour));
   const selection = hour === null ? "Choose a time on the schedule." : "Bay " + bay + " · " + clockLabel(hour) + "–" + clockLabel(hour + 1);
@@ -138,6 +163,17 @@ function App() {
             value={reference} disabled={busy} onChange={(event) => setReference(event.target.value)} />
           <button className="primary" disabled={busy || hour === null || !reference.trim()}>Reserve slot</button>
         </form>
+        {board.bookings.length > 0 && <section className="panel bookings" aria-labelledby="bookings-heading">
+          <h2 id="bookings-heading">Bookings for this day</h2>
+          <ul>
+            {[...board.bookings].sort((a, b) => a.bay - b.bay || a.hour - b.hour).map((booking) => <li key={booking.id}>
+              <span><strong>{booking.reference}</strong><small>Bay {booking.bay} · {clockLabel(booking.hour)}</small></span>
+              {booking.hour >= board.availableFrom && <button type="button" disabled={busy}
+                aria-label={"Cancel bay " + booking.bay + " at " + clockLabel(booking.hour)}
+                onClick={() => void cancel(booking)}>Cancel</button>}
+            </li>)}
+          </ul>
+        </section>}
       </div>}
     </main>
     <footer className="wrap"><a href="https://github.com/s7a7ic-37/depot-booking">Project source ↗</a></footer>

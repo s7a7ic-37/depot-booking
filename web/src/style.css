@@ -52,5 +52,11 @@ button[aria-pressed="true"], .primary:enabled { border-color: var(--accent); bac
 .booking-form input, .booking-form .primary { width: 100%; }
 .booking-form label { margin-top: 1.15rem; }
 .booking-form .primary { margin-top: .75rem; }
+.bookings { grid-column: 1 / -1; }
+.bookings ul { padding: 0; margin: .65rem 0 0; list-style: none; }
+.bookings li { display: flex; justify-content: space-between; align-items: center; gap: .65rem; border-top: 1px solid var(--line); padding-block: .55rem; }
+.bookings strong { overflow-wrap: anywhere; }
+.bookings small { display: block; color: var(--muted); margin-top: .2rem; }
+.bookings button { flex: none; }
 footer { padding-block: 1rem 1.5rem; }
 @media (max-width: 720px) { .layout { grid-template-columns: minmax(0, 1fr); } }

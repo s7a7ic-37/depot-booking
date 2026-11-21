@@ -1,4 +1,4 @@
-export type Booking = { id: number; bay: number; hour: number; reference: string };
+export type Booking = { id: number | string; bay: number; hour: number; reference: string };
 export type BookingInput = Omit<Booking, "id"> & { date: string };
 export type Board = {
   date: string;
@@ -76,7 +76,7 @@ export async function demoReserve(input: BookingInput): Promise<Response> {
     return Response.json({ message: "Use 1 to 32 letters, numbers, spaces or hyphens for the load reference." }, { status: 400 });
   }
   const db = await openDatabase();
-  const booking = { date, bay, hour, id: bay * 24 + hour, reference };
+  const booking = { date, bay, hour, id: crypto.randomUUID(), reference };
   try {
     return await new Promise<Response>((resolve, reject) => {
       const transaction = db.transaction("bookings", "readwrite");
@@ -85,6 +85,30 @@ export async function demoReserve(input: BookingInput): Promise<Response> {
       transaction.onabort = () => request.error?.name === "ConstraintError"
         ? resolve(Response.json({ message: "This slot was just booked. Choose another time." }, { status: 409 }))
         : reject(transaction.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+export async function demoCancel(date: string, booking: Booking): Promise<Response> {
+  const board = schedule(date);
+  const db = await openDatabase();
+  try {
+    return await new Promise<Response>((resolve, reject) => {
+      const transaction = db.transaction("bookings", "readwrite");
+      const store = transaction.objectStore("bookings");
+      const key = [date, booking.bay, booking.hour];
+      const lookup = store.get(key);
+      let removed = false;
+      lookup.onsuccess = () => {
+        if (lookup.result?.id === booking.id && booking.hour >= board.availableFrom) {
+          store.delete(key);
+          removed = true;
+        }
+      };
+      transaction.oncomplete = () => resolve(new Response(null, { status: removed ? 204 : 404 }));
+      transaction.onabort = () => reject(transaction.error);
     });
   } finally {
     db.close();

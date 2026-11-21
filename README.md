@@ -4,6 +4,8 @@ Book an hour at one of three loading bays. The full stack version uses React, AS
 
 [Try the browser demo](https://depot.artemislab.co.uk/). Demo bookings stay in IndexedDB. The unique slot key demonstrates the same conflict in two tabs without a server account.
 
+Future bookings can be cancelled and booked again. Cancellation checks the booking ID so an older tab cannot cancel a replacement.
+
 ## Run locally
 
 Use .NET 10, Node 22.12+ and a separate local PostgreSQL database. Set the connection string in the environment as ConnectionStrings__Depot. The API creates its bookings table when it starts. A seven-day HttpOnly cookie separates workspaces.

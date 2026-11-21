@@ -126,6 +126,26 @@ app.MapPost("/api/bookings", async Task<IResult> (BookingRequest request, HttpCo
     return Results.Json(new Booking(id, request.Bay, request.Hour, reference), statusCode: 201);
 });
 
+app.MapDelete("/api/bookings/{id:long}", async Task<IResult> (long id, HttpContext context, CancellationToken cancellation) =>
+{
+    if (!ReadWorkspace(context, out var workspace))
+        return Results.Json(new { message = "Refresh the schedule to start a workspace." }, statusCode: 401);
+
+    var now = NowInLondon();
+    await using var cancel = database.CreateCommand("""
+        DELETE FROM depot_reservations
+        WHERE id = $1 AND workspace = $2
+          AND (booked_on > $3 OR (booked_on = $3 AND start_hour > $4))
+        """);
+    cancel.Parameters.Add(new NpgsqlParameter { Value = id });
+    cancel.Parameters.Add(new NpgsqlParameter { Value = workspace });
+    cancel.Parameters.Add(new NpgsqlParameter { Value = DateOnly.FromDateTime(now) });
+    cancel.Parameters.Add(new NpgsqlParameter { Value = now.Hour });
+    return await cancel.ExecuteNonQueryAsync(cancellation) == 1
+        ? Results.NoContent()
+        : Results.NotFound(new { message = "This booking is no longer available to cancel." });
+});
+
 await app.RunAsync();
 
 record BookingRequest(DateOnly Date, int Bay, int Hour, string? Reference);

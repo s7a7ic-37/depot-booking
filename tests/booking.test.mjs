@@ -30,6 +30,12 @@ function workspace() {
         body: JSON.stringify(booking),
       });
     },
+    cancel(id) {
+      return fetch(new URL("/api/bookings/" + id, origin), {
+        method: "DELETE",
+        headers: { Origin: origin.origin, Cookie: cookie },
+      });
+    },
   };
 }
 
@@ -53,6 +59,15 @@ test("simultaneous requests for one slot save exactly one booking", async () => 
   assert.deepEqual((await visitor.read(board.date)).bookings, []);
   assert.equal((await visitor.reserve({ ...input, reference: "OTHER-DEMO" })).status, 201);
   assert.deepEqual((await client.read(board.date)).bookings, after.bookings);
+  assert.equal((await visitor.cancel(saved.id)).status, 404);
+  assert.equal((await client.cancel(saved.id)).status, 204);
+  assert.deepEqual((await client.read(board.date)).bookings, []);
+  const replacementResponse = await client.reserve({ ...input, reference: "REPLACEMENT" });
+  assert.equal(replacementResponse.status, 201);
+  const replacement = await replacementResponse.json();
+  assert.notEqual(replacement.id, saved.id);
+  assert.equal((await client.cancel(saved.id)).status, 404);
+  assert.deepEqual((await client.read(board.date)).bookings, [replacement]);
 });
 
 test("invalid date, bay, hour and reference leave the board unchanged", async () => {
