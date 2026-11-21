@@ -28,6 +28,7 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: web/package-lock.json
+      - run: node --test tests/worker-live.test.mjs
       - run: npm ci --prefix web
       - run: npm run build:demo --prefix web
       - run: npx --prefix web playwright install --with-deps --only-shell chromium webkit

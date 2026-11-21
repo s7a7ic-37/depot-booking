@@ -41,3 +41,5 @@ Run against a separate loopback test database. The checks create a synthetic boo
 4. Verify the service and booking actions before changing the public hostname. The browser demo can stay available while the database-backed service is being set up.
 
 Free services can sleep between visits. Workspace cookies distinguish demo browsers, so use fictional load references. [Render Free plan](https://render.com/docs/free) · [Render secret files](https://render.com/docs/docker-secrets)
+
+After verifying Render, the optional `wrangler.live.jsonc` serves `api/wwwroot` at `depot-live.artemislab.co.uk`. Build with `npm run build --prefix web`, set Render’s `SiteOrigin` to `https://depot-live.artemislab.co.uk` and pass the verified Render HTTPS origin through Wrangler’s `--var API_ORIGIN:<origin>`. This config only proxies Depot API routes. [Wrangler deploy options](https://developers.cloudflare.com/workers/wrangler/commands/workers/#deploy)
