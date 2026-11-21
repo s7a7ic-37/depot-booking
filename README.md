@@ -29,7 +29,7 @@ The browser checks run the demo on loopback. Install Chromium and WebKit with np
 
 ## Check concurrent reservations
 
-Run against a separate loopback test database. The checks create a synthetic booking and confirm that invalid requests do not change the schedule.
+With the app running against a separate loopback test database, run the checks from the repository root. For Docker Compose, set `DEPOT_TEST_URL` to `http://localhost:4186` before running the command so the test origin matches the service.
 
     node --test tests/booking.test.mjs
 
