@@ -51,6 +51,8 @@ button[aria-pressed="true"], .primary:enabled { border-color: var(--accent); bac
 .slots button { min-height: 58px; text-align: start; font-weight: 720; font-variant-numeric: tabular-nums; }
 .slots small { display: block; margin-top: .18rem; font-weight: 500; color: var(--muted); }
 .booking-form input, .booking-form .primary { width: 100%; }
+.booking-form input { border-color: var(--muted); }
+.booking-form input::placeholder { color: var(--muted); opacity: 1; }
 .booking-form label { margin-top: 1.15rem; }
 .booking-form .primary { margin-top: .75rem; }
 .keep-booking { width: 100%; margin-top: .45rem; }
