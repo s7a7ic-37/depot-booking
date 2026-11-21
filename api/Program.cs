@@ -5,13 +5,17 @@ const int firstHour = 8;
 const int lastHour = 16;
 const int bookingHorizon = 14;
 const string workspaceCookie = "depot_workspace";
+const string connectionFile = "/etc/secrets/ConnectionStrings__Depot";
 var london = TimeZoneInfo.FindSystemTimeZoneById("Europe/London");
 DateTime NowInLondon() => TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, london).DateTime;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddProblemDetails();
-var connectionString = builder.Configuration.GetConnectionString("Depot")
-    ?? throw new InvalidOperationException("Set ConnectionStrings__Depot for your local PostgreSQL database.");
+var connectionString = builder.Configuration.GetConnectionString("Depot");
+if (string.IsNullOrWhiteSpace(connectionString) && File.Exists(connectionFile))
+    connectionString = (await File.ReadAllTextAsync(connectionFile)).Trim();
+if (string.IsNullOrWhiteSpace(connectionString))
+    throw new InvalidOperationException("Set ConnectionStrings__Depot or mount the Depot database secret file.");
 var secureCookies = builder.Configuration.GetValue<bool>("SecureCookies");
 var siteOrigin = builder.Configuration["SiteOrigin"];
 await using var database = NpgsqlDataSource.Create(connectionString);
@@ -53,6 +57,18 @@ app.Use(async (context, next) =>
 bool ReadWorkspace(HttpContext context, out Guid workspace) =>
     Guid.TryParseExact(context.Request.Cookies[workspaceCookie], "N", out workspace) && workspace != Guid.Empty;
 
+void RenewWorkspace(HttpContext context, Guid workspace)
+{
+    context.Response.Cookies.Append(workspaceCookie, workspace.ToString("N"), new CookieOptions
+    {
+        HttpOnly = true,
+        Secure = secureCookies,
+        SameSite = SameSiteMode.Strict,
+        Path = "/api",
+        MaxAge = TimeSpan.FromDays(bookingHorizon + 1)
+    });
+}
+
 string? SlotError(DateOnly date, int bay, int hour, DateTime now)
 {
     var today = DateOnly.FromDateTime(now);
@@ -65,6 +81,8 @@ string? SlotError(DateOnly date, int bay, int hour, DateTime now)
     return null;
 }
 
+app.MapGet("/api/health", () => Results.Ok(new { status = "ok" }));
+
 app.MapGet("/api/board", async Task<IResult> (DateOnly? date, HttpContext context, CancellationToken cancellation) =>
 {
     var now = NowInLondon();
@@ -75,17 +93,7 @@ app.MapGet("/api/board", async Task<IResult> (DateOnly? date, HttpContext contex
         return Results.BadRequest(new { message = "Choose a date within the next 14 days." });
 
     if (!ReadWorkspace(context, out var workspace))
-    {
         workspace = Guid.NewGuid();
-        context.Response.Cookies.Append(workspaceCookie, workspace.ToString("N"), new CookieOptions
-        {
-            HttpOnly = true,
-            Secure = secureCookies,
-            SameSite = SameSiteMode.Strict,
-            Path = "/api",
-            MaxAge = TimeSpan.FromDays(7)
-        });
-    }
     await using var query = database.CreateCommand("""
         SELECT id, bay, start_hour, reference
         FROM depot_reservations WHERE workspace = $1 AND booked_on = $2 ORDER BY bay, start_hour
@@ -98,6 +106,7 @@ app.MapGet("/api/board", async Task<IResult> (DateOnly? date, HttpContext contex
         bookings.Add(new Booking(rows.GetInt64(0), rows.GetInt16(1), rows.GetInt16(2), rows.GetString(3)));
 
     var availableFrom = day == firstDay ? Math.Max(firstHour, now.Hour + 1) : firstHour;
+    RenewWorkspace(context, workspace);
     return Results.Ok(new { date = day, firstDay, lastDay, bayCount, firstHour, lastHour, availableFrom, bookings });
 });
 
@@ -129,6 +138,7 @@ app.MapPost("/api/bookings", async Task<IResult> (BookingRequest request, HttpCo
     if (await insert.ExecuteScalarAsync(cancellation) is not long id)
         return Results.Conflict(new { message = "This slot was just booked. Choose another time." });
 
+    RenewWorkspace(context, workspace);
     return Results.Json(new Booking(id, request.Bay, request.Hour, reference), statusCode: 201);
 });
 

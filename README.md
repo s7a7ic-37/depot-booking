@@ -11,7 +11,7 @@ Download the displayed day's bookings across all bays as CSV. Rows are sorted by
 
 ## Run locally
 
-Use .NET 10, Node 22.12+ and a separate local PostgreSQL database. Set the connection string in the environment as ConnectionStrings__Depot. The API creates its bookings table when it starts. A seven-day HttpOnly cookie separates workspaces.
+Use .NET 10, Node 22.12+ and a separate local PostgreSQL database. Set the connection string in the environment as `ConnectionStrings__Depot`. The API creates its bookings table when it starts. Reading the schedule or making a reservation renews the same 15-day HttpOnly workspace cookie.
 
     cd web
     npm ci
@@ -33,4 +33,11 @@ Run against a separate loopback test database. The checks create a synthetic boo
 
     node --test tests/booking.test.mjs
 
-For an HTTPS server deployment set SecureCookies=true and SiteOrigin to the public origin. Demo workspace cookies identify a browser workspace. Use fictional references.
+## Render deployment
+
+1. Use a Render Docker web service on the Free plan and a separate database in a Neon Free project. Confirm free usage is available before creating either resource.
+2. In Render, add a Secret File named `ConnectionStrings__Depot` with the private Npgsql connection string in key-value format and `SSL Mode=VerifyFull`. The service loads it from `/etc/secrets` when the environment setting is absent.
+3. Set `ASPNETCORE_HTTP_PORTS=10000`, `SecureCookies=true` and `SiteOrigin` to the exact public HTTPS origin, without a trailing slash. Set the health check path to `/api/health`.
+4. Verify the service and booking actions before changing the public hostname. The browser demo can stay available while the database-backed service is being set up.
+
+Free services can sleep between visits. Workspace cookies distinguish demo browsers, so use fictional load references. [Render Free plan](https://render.com/docs/free) · [Render secret files](https://render.com/docs/docker-secrets)

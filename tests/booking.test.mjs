@@ -15,6 +15,20 @@ function dayAfter(date, days) {
 
 function workspace() {
   let cookie = "";
+
+  function rememberCookie(response) {
+    const issued = response.headers.get("Set-Cookie");
+    assert.ok(issued, "Expected a renewed workspace cookie.");
+    const [next, ...options] = issued.split(";");
+    assert.ok(/^depot_workspace=[0-9a-f]{32}$/.test(next));
+    assert.ok(!cookie || next === cookie, "Renewal must keep the same workspace ID.");
+    const flags = options.map(option => option.trim().toLowerCase());
+    for (const flag of ["httponly", "samesite=strict", "path=/api", "max-age=1296000"]) {
+      assert.ok(flags.includes(flag), "Missing cookie option " + flag);
+    }
+    cookie = next;
+  }
+
   return {
     async read(date) {
       const url = new URL("/api/board", origin);
@@ -22,19 +36,17 @@ function workspace() {
       const response = await fetch(url, { headers: { Cookie: cookie } });
       assert.equal(response.status, 200);
       assert.equal(response.headers.get("Cache-Control"), "no-store");
-      const issued = response.headers.get("Set-Cookie");
-      if (issued) {
-        assert.match(issued, /httponly/i);
-        cookie = issued.split(";", 1)[0];
-      }
+      rememberCookie(response);
       return response.json();
     },
-    reserve(booking) {
-      return fetch(new URL("/api/bookings", origin), {
+    async reserve(booking) {
+      const response = await fetch(new URL("/api/bookings", origin), {
         method: "POST",
         headers: { "Content-Type": "application/json", Origin: origin.origin, Cookie: cookie },
         body: JSON.stringify(booking),
       });
+      if (response.status === 201) rememberCookie(response);
+      return response;
     },
     async move(id, target) {
       const response = await fetch(new URL("/api/bookings/" + id + "/move", origin), {
@@ -53,6 +65,25 @@ function workspace() {
     },
   };
 }
+
+test("health is ready after startup and does not issue a workspace cookie", async () => {
+  const response = await fetch(new URL("/api/health", origin));
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("Cache-Control"), "no-store");
+  assert.equal(response.headers.has("Set-Cookie"), false);
+  assert.deepEqual(await response.json(), { status: "ok" });
+});
+
+test("reserving on the final booking day renews the existing workspace for 15 days", async () => {
+  const client = workspace();
+  const initial = await client.read();
+  assert.equal(initial.lastDay, dayAfter(initial.firstDay, 14));
+  const response = await client.reserve({ date: initial.lastDay, bay: 1, hour: initial.lastHour, reference: "FAR-DATE" });
+  assert.equal(response.status, 201);
+  const booking = await response.json();
+  assert.deepEqual((await client.read(initial.lastDay)).bookings, [booking]);
+  assert.equal((await client.cancel(booking.id)).status, 204);
+});
 
 test("simultaneous requests for one slot save exactly one booking", async () => {
   const client = workspace();

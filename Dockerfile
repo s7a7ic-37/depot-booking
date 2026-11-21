@@ -15,5 +15,8 @@ RUN dotnet publish --no-restore -c Release -o /app
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
 WORKDIR /app
 COPY --from=backend /app .
+# Render mounts secret files for group 1000.
+RUN (getent group 1000 >/dev/null || groupadd --gid 1000 render-secrets) \
+    && usermod --append --groups 1000 app
 USER $APP_UID
 ENTRYPOINT ["dotnet", "DepotBooking.dll"]

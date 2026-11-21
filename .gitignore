@@ -1,5 +1,6 @@
 .env
 .env.*
+ConnectionStrings__Depot
 bin/
 obj/
 node_modules/

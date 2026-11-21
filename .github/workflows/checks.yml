@@ -38,11 +38,16 @@ jobs:
           ConnectionStrings__Depot: Host=127.0.0.1;Database=depot_booking_test;Username=depot
           SiteOrigin: http://127.0.0.1:4186
         run: |
+          secret_file="$RUNNER_TEMP/ConnectionStrings__Depot"
+          printf '%s\n' "$ConnectionStrings__Depot" > "$secret_file"
+          sudo chgrp 1000 "$secret_file"
+          chmod 0440 "$secret_file"
           docker run --detach --name depot-api --network host \
-            -e ConnectionStrings__Depot -e SiteOrigin \
+            --mount "type=bind,source=$secret_file,target=/etc/secrets/ConnectionStrings__Depot,readonly" \
+            -e SiteOrigin \
             -e ASPNETCORE_HTTP_PORTS=4186 depot-test
           for attempt in {1..30}; do
-            if curl --fail --silent --output /dev/null http://127.0.0.1:4186/api/board; then break; fi
+            if curl --fail --silent --output /dev/null http://127.0.0.1:4186/api/health; then break; fi
             sleep 1
           done
           node --test tests/booking.test.mjs

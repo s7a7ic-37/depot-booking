@@ -5,3 +5,4 @@
 api/wwwroot
 web/dist
 **/.env*
+**/ConnectionStrings__Depot
