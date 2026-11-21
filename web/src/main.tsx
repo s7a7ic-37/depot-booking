@@ -9,6 +9,24 @@ const browserDemo = import.meta.env.MODE === "demo";
 const clockLabel = (hour: number) => String(hour).padStart(2, "0") + ":00";
 const dayLabel = new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "short", timeZone: "UTC" });
 
+function downloadDay(date: string, bookings: Booking[]) {
+  const rows = bookings.map(({ bay, hour, reference }) => {
+    // shortcut: the CSV text prefix targets Excel; use typed exports for other importers.
+    const text = /^\s*[=+\-@＝＋－＠]/u.test(reference) || /^[\t\r\n]/.test(reference) ? "\t" + reference : reference;
+    return [date, bay, clockLabel(hour), '"' + text.replaceAll('"', '""') + '"'].join(",");
+  });
+  const csv = new Blob(["Date,Bay,Start time (UK),Load reference\r\n", rows.join("\r\n"), "\r\n"],
+    { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(csv);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "depot-bookings-" + date + ".csv";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 async function getBoard(date = ""): Promise<Board> {
   if (browserDemo) return demoBoard(date);
   const params = date ? "?" + new URLSearchParams({ date }) : "";
@@ -112,7 +130,8 @@ function App() {
   }
 
   const hours = board ? Array.from({ length: board.lastHour - board.firstHour + 1 }, (_, i) => board.firstHour + i) : [];
-  const booked = new Set(board?.bookings.filter((slot) => slot.bay === bay).map((slot) => slot.hour));
+  const bookings = [...(board?.bookings ?? [])].sort((a, b) => a.bay - b.bay || a.hour - b.hour);
+  const booked = new Set(bookings.filter((slot) => slot.bay === bay).map((slot) => slot.hour));
   const selection = hour === null ? "Choose a time on the schedule." : "Bay " + bay + " · " + clockLabel(hour) + "–" + clockLabel(hour + 1);
 
   return <>
@@ -134,7 +153,11 @@ function App() {
               <input id="date" type="date" value={board.date} min={board.firstDay} max={board.lastDay}
                 disabled={busy} onChange={(event) => { if (event.target.value) void loadSchedule(event.target.value); }} />
             </div>
-            <button type="button" disabled={busy} onClick={() => void loadSchedule(board.date)}>Refresh schedule</button>
+            <div className="schedule-actions">
+              <button type="button" disabled={busy} onClick={() => void loadSchedule(board.date)}>Refresh schedule</button>
+              <button type="button" disabled={busy || bookings.length === 0}
+                onClick={() => downloadDay(board.date, bookings)}>Download day CSV</button>
+            </div>
           </div>
           <div className="bay-list" role="group" aria-label="Loading bay">
             {Array.from({ length: board.bayCount }, (_, i) => i + 1).map((number) =>
@@ -163,10 +186,10 @@ function App() {
             value={reference} disabled={busy} onChange={(event) => setReference(event.target.value)} />
           <button className="primary" disabled={busy || hour === null || !reference.trim()}>Reserve slot</button>
         </form>
-        {board.bookings.length > 0 && <section className="panel bookings" aria-labelledby="bookings-heading">
+        {bookings.length > 0 && <section className="panel bookings" aria-labelledby="bookings-heading">
           <h2 id="bookings-heading">Bookings for this day</h2>
           <ul>
-            {[...board.bookings].sort((a, b) => a.bay - b.bay || a.hour - b.hour).map((booking) => <li key={booking.id}>
+            {bookings.map((booking) => <li key={booking.id}>
               <span><strong>{booking.reference}</strong><small>Bay {booking.bay} · {clockLabel(booking.hour)}</small></span>
               {booking.hour >= board.availableFrom && <button type="button" disabled={busy}
                 aria-label={"Cancel bay " + booking.bay + " at " + clockLabel(booking.hour)}

@@ -6,6 +6,8 @@ Book an hour at one of three loading bays. The full stack version uses React, AS
 
 Future bookings can be cancelled and booked again. Cancellation checks the booking ID so an older tab cannot cancel a replacement.
 
+Download the displayed day's bookings across all bays as CSV. Rows are sorted by bay and UK start time. The export includes the date, bay, start time and load reference.
+
 ## Run locally
 
 Use .NET 10, Node 22.12+ and a separate local PostgreSQL database. Set the connection string in the environment as ConnectionStrings__Depot. The API creates its bookings table when it starts. A seven-day HttpOnly cookie separates workspaces.
