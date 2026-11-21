@@ -22,6 +22,8 @@ For Docker Compose, put a private URL-safe DEPOT_DB_PASSWORD in a local .env fil
 
 Build the static browser demo with npm run build:demo from web.
 
+The browser checks run the demo on loopback. Install Chromium and WebKit with npx playwright install --only-shell chromium webkit from web, then run npm run test:browser.
+
 ## Check concurrent reservations
 
 Run against a separate loopback test database. The checks create a synthetic booking and confirm that invalid requests do not change the schedule.

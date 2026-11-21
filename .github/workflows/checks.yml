@@ -30,6 +30,8 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci --prefix web
       - run: npm run build:demo --prefix web
+      - run: npx --prefix web playwright install --with-deps --only-shell chromium webkit
+      - run: npm run test:browser --prefix web
       - run: docker build --tag depot-test .
       - name: Verify PostgreSQL booking API
         env:

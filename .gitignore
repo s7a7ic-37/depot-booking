@@ -5,3 +5,5 @@ obj/
 node_modules/
 api/wwwroot/
 web/dist/
+test-results/
+playwright-report/
