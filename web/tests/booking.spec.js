@@ -7,8 +7,12 @@ async function dateAfter(dateField, days) {
   return date.toISOString().slice(0, 10);
 }
 
-async function book(tab, slot, reference) {
-  await tab.getByRole("button", { name: slot + ", Available", exact: true }).click();
+function timeSlot(tab, bay, hour, state = "Available") {
+  return tab.getByRole("button", { name: `${hour} ${state}, Bay ${bay}`, exact: true });
+}
+
+async function book(tab, bay, hour, reference) {
+  await timeSlot(tab, bay, hour).click();
   await tab.getByLabel("Load reference").fill(reference);
   await tab.getByRole("button", { name: "Reserve slot", exact: true }).click();
   await expect(tab.getByRole("status")).toContainText(reference);
@@ -26,24 +30,23 @@ test("a replacement booking survives cancellation from a stale phone tab", async
   await date.fill(day);
   await expect(date).toHaveValue(day);
 
-  const slot = "Bay 1, 08:00";
   async function cancel(tab) {
     tab.once("dialog", dialog => dialog.accept());
     await tab.getByRole("button", { name: "Cancel bay 1 at 08:00", exact: true }).click();
   }
 
-  await book(page, slot, "FIRST-LOAD");
+  await book(page, 1, "08:00", "FIRST-LOAD");
   const stale = await context.newPage();
   await stale.goto("/");
   await stale.getByLabel("Booking date").fill(day);
   await expect(stale.getByText("FIRST-LOAD", { exact: true })).toBeVisible();
   await cancel(page);
   await expect(page.getByRole("status")).toContainText("Booking cancelled.");
-  await book(page, slot, "REPLACEMENT-LOAD");
+  await book(page, 1, "08:00", "REPLACEMENT-LOAD");
   await cancel(stale);
   await expect(stale.getByRole("status")).toContainText("That booking could not be cancelled.");
   await expect(stale.getByText("REPLACEMENT-LOAD", { exact: true })).toBeVisible();
-  await expect(stale.getByRole("button", { name: slot + ", Booked", exact: true })).toBeDisabled();
+  await expect(timeSlot(stale, 1, "08:00", "Booked")).toBeDisabled();
   expect(await stale.evaluate(() => document.documentElement.scrollWidth === innerWidth)).toBe(true);
   expect(apiRequests).toEqual([]);
 });
@@ -53,8 +56,8 @@ test("keyboard cancellation keeps focus in the schedule at 320px", async ({ page
   await page.goto("/");
   const date = page.getByLabel("Booking date");
   await date.fill(await dateAfter(date, 1));
-  await book(page, "Bay 1, 08:00", "FIRST");
-  await book(page, "Bay 1, 09:00", "SECOND");
+  await book(page, 1, "08:00", "FIRST");
+  await book(page, 1, "09:00", "SECOND");
 
   for (const [hour, heading] of [["08:00", "Bookings for this day"], ["09:00", "Time slots"]]) {
     const button = page.getByRole("button", { name: "Cancel bay 1 at " + hour, exact: true });
@@ -68,6 +71,47 @@ test("keyboard cancellation keeps focus in the schedule at 320px", async ({ page
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
 });
 
+test("keyboard reservation restores focus after success, invalid input and a conflict at 320px", async ({ page, context }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.goto("/");
+  const date = page.getByLabel("Booking date");
+  const day = await dateAfter(date, 1);
+  await date.fill(day);
+  const reference = page.getByLabel("Load reference");
+  const reserve = page.getByRole("button", { name: "Reserve slot", exact: true });
+  await timeSlot(page, 1, "08:00").press("Enter");
+  await reference.fill("KEYBOARD-LOAD");
+  await page.keyboard.press("Tab");
+  await expect(reserve).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("status")).toContainText("Booked bay 1 at 08:00 for KEYBOARD-LOAD.");
+  await expect(page.getByRole("heading", { name: "Bookings for this day" })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", { name: "Move bay 1 at 08:00" })).toBeFocused();
+
+  const nextSlot = timeSlot(page, 1, "09:00");
+  await nextSlot.press("Enter");
+  await reference.fill("INVALID!");
+  await reference.press("Enter");
+  await expect(page.getByRole("status")).toContainText("Use 1 to 32 letters");
+  await expect(reference).toBeFocused();
+  await expect(reference).toHaveValue("INVALID!");
+  await expect(nextSlot).toHaveAttribute("aria-pressed", "true");
+
+  const other = await context.newPage();
+  await other.goto("/");
+  await other.getByLabel("Booking date").fill(day);
+  await book(other, 1, "09:00", "OTHER-LOAD");
+  await other.close();
+  await reference.fill("KEEP-REFERENCE");
+  await reference.press("Enter");
+  await expect(page.getByRole("status")).toContainText("This slot was just booked. Choose another time.");
+  await expect(page.getByRole("heading", { name: "Time slots" })).toBeFocused();
+  await expect(reference).toHaveValue("KEEP-REFERENCE");
+  await expect(timeSlot(page, 1, "09:00", "Booked")).toBeDisabled();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
+});
+
 test("day CSV includes every bay in order and protects spreadsheet references", async ({ page, browser, baseURL }) => {
   await page.goto("/");
   const date = page.getByLabel("Booking date");
@@ -76,15 +120,15 @@ test("day CSV includes every bay in order and protects spreadsheet references", 
   const otherDay = await dateAfter(date, 2);
   await expect(csv).toBeDisabled();
   await date.fill(otherDay);
-  await book(page, "Bay 1, 08:00", "OTHER-DAY");
+  await book(page, 1, "08:00", "OTHER-DAY");
   await date.fill(day);
   await expect(date).toHaveValue(day);
   await expect(csv).toBeDisabled();
   await page.getByRole("button", { name: "Bay 2", exact: true }).click();
-  await book(page, "Bay 2, 14:00", "BAY-TWO");
+  await book(page, 2, "14:00", "BAY-TWO");
   await page.getByRole("button", { name: "Bay 1", exact: true }).click();
-  await book(page, "Bay 1, 11:00", "LATER");
-  await book(page, "Bay 1, 08:00", "-LOAD-101");
+  await book(page, 1, "11:00", "LATER");
+  await book(page, 1, "08:00", "-LOAD-101");
 
   const nextDownload = page.waitForEvent("download");
   await csv.click();
@@ -108,7 +152,7 @@ test("day CSV includes every bay in order and protects spreadsheet references", 
     await visitorDate.fill(day);
     await expect(visitorDate).toHaveValue(day);
     await expect(visitor.getByRole("button", { name: "Download day CSV", exact: true })).toBeDisabled();
-    await expect(visitor.getByRole("button", { name: "Bay 1, 08:00, Available", exact: true })).toBeEnabled();
+    await expect(timeSlot(visitor, 1, "08:00")).toBeEnabled();
   } finally {
     await isolated.close();
   }
@@ -119,8 +163,8 @@ test("two tabs moving to one slot preserve the booking that loses the conflict",
   const date = page.getByLabel("Booking date");
   const day = await dateAfter(date, 1);
   await date.fill(day);
-  await book(page, "Bay 1, 08:00", "FIRST");
-  await book(page, "Bay 1, 10:00", "SECOND");
+  await book(page, 1, "08:00", "FIRST");
+  await book(page, 1, "10:00", "SECOND");
 
   const other = await context.newPage();
   await other.goto("/");
@@ -139,7 +183,7 @@ test("two tabs moving to one slot preserve the booking that loses the conflict",
   await other.getByRole("button", { name: "Move bay 1 at 10:00" }).click();
   for (const tab of [page, other]) {
     await tab.getByRole("button", { name: "Bay 2", exact: true }).click();
-    await tab.getByRole("button", { name: "Bay 2, 09:00, Available" }).click();
+    await timeSlot(tab, 2, "09:00").click();
   }
   await Promise.all([page, other].map(tab => tab.getByRole("button", { name: "Confirm move" }).click()));
   await expect.poll(async () => {

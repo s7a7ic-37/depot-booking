@@ -53,7 +53,7 @@ function App() {
   const [busy, setBusy] = useState(true);
   const [message, setMessage] = useState("");
   const [failed, setFailed] = useState(false);
-  const cancelFocus = useRef<HTMLButtonElement | null>(null);
+  const focusAfterChange = useRef<HTMLButtonElement | string | null>(null);
 
   async function loadSchedule(date?: string) {
     setBusy(true);
@@ -75,19 +75,25 @@ function App() {
   useEffect(() => { void loadSchedule(); }, []);
 
   useEffect(() => {
-    const trigger = cancelFocus.current;
-    if (busy || !trigger) return;
-    cancelFocus.current = null;
+    const target = focusAfterChange.current;
+    if (busy || !target) return;
+    focusAfterChange.current = null;
     if (document.activeElement !== document.body) return;
-    const target = trigger.isConnected
-      ? trigger
-      : document.getElementById("bookings-heading") ?? document.getElementById("slots-heading");
-    target?.focus();
+    if (typeof target === "string") {
+      document.getElementById(target)?.focus();
+    } else if (target.isConnected) {
+      target.focus();
+    } else {
+      const heading = document.getElementById("bookings-heading") ?? document.getElementById("slots-heading");
+      heading?.focus();
+    }
   }, [board, busy]);
 
   async function submitBooking(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy || !board || hour === null) return;
+    const restoreReserveFocus = !moving && event.currentTarget.contains(document.activeElement);
+    if (restoreReserveFocus) focusAfterChange.current = "reference";
     setBusy(true);
     setFailed(false);
     setMessage(moving ? "Moving booking…" : "Saving booking…");
@@ -100,6 +106,7 @@ function App() {
       if (response.status === 409 || (moving && response.status === 404)) {
         setFailed(true);
         setHour(null);
+        if (restoreReserveFocus) focusAfterChange.current = "slots-heading";
         const current = await getBoard(board.date);
         setBoard(current);
         if (moving && (response.status === 404 || !current.bookings.some((row) => row.id === moving.id))) {
@@ -110,6 +117,7 @@ function App() {
         }
       } else if (response.ok) {
         const saved: Booking = await response.json();
+        if (restoreReserveFocus) focusAfterChange.current = "bookings-heading";
         const remaining = moving ? board.bookings.filter((row) => row.id !== moving.id) : board.bookings;
         setBoard({ ...board, bookings: [...remaining, saved] });
         setMessage(moving
@@ -144,7 +152,7 @@ function App() {
     if (busy || !board) return;
     const wasFocused = document.activeElement === trigger;
     if (!window.confirm("Cancel bay " + booking.bay + " at " + clockLabel(booking.hour) + "?")) return;
-    cancelFocus.current = wasFocused ? trigger : null;
+    focusAfterChange.current = wasFocused ? trigger : null;
     setBusy(true);
     setFailed(false);
     setMessage("Cancelling booking…");
@@ -209,10 +217,11 @@ function App() {
           <div className="slots">
             {hours.map((time) => {
               const state = booked.has(time) ? "Booked" : time < board.availableFrom ? "Elapsed" : "Available";
+              const label = clockLabel(time);
               return <button key={time} type="button" disabled={busy || state !== "Available"}
-                aria-label={"Bay " + bay + ", " + clockLabel(time) + ", " + state}
+                aria-label={`${label} ${state}, Bay ${bay}`}
                 aria-pressed={hour === time} onClick={() => setHour(time)}>
-                <span>{clockLabel(time)}</span><small>{state}</small>
+                <span>{label}</span>{" "}<small>{state}</small>
               </button>;
             })}
           </div>
