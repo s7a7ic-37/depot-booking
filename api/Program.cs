@@ -53,6 +53,18 @@ app.Use(async (context, next) =>
 bool ReadWorkspace(HttpContext context, out Guid workspace) =>
     Guid.TryParseExact(context.Request.Cookies[workspaceCookie], "N", out workspace) && workspace != Guid.Empty;
 
+string? SlotError(DateOnly date, int bay, int hour, DateTime now)
+{
+    var today = DateOnly.FromDateTime(now);
+    if (date < today || date > today.AddDays(bookingHorizon))
+        return "Choose a date within the next 14 days.";
+    if (bay is < 1 or > bayCount || hour is < firstHour or > lastHour)
+        return "Choose an available bay and hour.";
+    if (date == today && hour <= now.Hour)
+        return "That hour has already started. Choose a later time.";
+    return null;
+}
+
 app.MapGet("/api/board", async Task<IResult> (DateOnly? date, HttpContext context, CancellationToken cancellation) =>
 {
     var now = NowInLondon();
@@ -94,14 +106,8 @@ app.MapPost("/api/bookings", async Task<IResult> (BookingRequest request, HttpCo
     if (!ReadWorkspace(context, out var workspace))
         return Results.Json(new { message = "Refresh the schedule to start a workspace." }, statusCode: 401);
 
-    var now = NowInLondon();
-    var today = DateOnly.FromDateTime(now);
-    if (request.Date < today || request.Date > today.AddDays(bookingHorizon))
-        return Results.BadRequest(new { message = "Choose a date within the next 14 days." });
-    if (request.Bay is < 1 or > bayCount || request.Hour is < firstHour or > lastHour)
-        return Results.BadRequest(new { message = "Choose an available bay and hour." });
-    if (request.Date == today && request.Hour <= now.Hour)
-        return Results.BadRequest(new { message = "That hour has already started. Choose a later time." });
+    if (SlotError(request.Date, request.Bay, request.Hour, NowInLondon()) is { } error)
+        return Results.BadRequest(new { message = error });
 
     var reference = request.Reference?.Trim();
     if (reference is null || reference.Length is < 1 or > 32 ||
@@ -124,6 +130,56 @@ app.MapPost("/api/bookings", async Task<IResult> (BookingRequest request, HttpCo
         return Results.Conflict(new { message = "This slot was just booked. Choose another time." });
 
     return Results.Json(new Booking(id, request.Bay, request.Hour, reference), statusCode: 201);
+});
+
+app.MapPost("/api/bookings/{id:long}/move", async Task<IResult> (long id, MoveRequest request, HttpContext context, CancellationToken cancellation) =>
+{
+    if (!ReadWorkspace(context, out var workspace))
+        return Results.Json(new { message = "Refresh the schedule to start a workspace." }, statusCode: 401);
+
+    var now = NowInLondon();
+    if (SlotError(request.Date, request.Bay, request.Hour, now) is { } error)
+        return Results.BadRequest(new { message = error });
+
+    // A fresh identity makes actions from tabs holding the previous booking ID stale.
+    await using var move = database.CreateCommand("""
+        WITH source AS (
+            SELECT id, booked_on, bay, start_hour FROM depot_reservations
+            WHERE id = $1 AND workspace = $2
+              AND (booked_on > $3 OR (booked_on = $3 AND start_hour > $4))
+            FOR UPDATE
+        ), moved AS (
+            UPDATE depot_reservations AS booking
+            SET id = DEFAULT, bay = $6, start_hour = $7
+            FROM source
+            WHERE booking.id = source.id AND source.booked_on = $5
+              AND (source.bay, source.start_hour) <> ($6, $7)
+            RETURNING booking.id, booking.bay, booking.start_hour, booking.reference
+        )
+        SELECT moved.id, moved.bay, moved.start_hour, moved.reference
+        FROM source LEFT JOIN moved ON true
+        """);
+    move.Parameters.Add(new NpgsqlParameter { Value = id });
+    move.Parameters.Add(new NpgsqlParameter { Value = workspace });
+    move.Parameters.Add(new NpgsqlParameter { Value = DateOnly.FromDateTime(now) });
+    move.Parameters.Add(new NpgsqlParameter { Value = now.Hour });
+    move.Parameters.Add(new NpgsqlParameter { Value = request.Date });
+    move.Parameters.Add(new NpgsqlParameter { Value = request.Bay });
+    move.Parameters.Add(new NpgsqlParameter { Value = request.Hour });
+
+    try
+    {
+        await using var rows = await move.ExecuteReaderAsync(cancellation);
+        if (!await rows.ReadAsync(cancellation))
+            return Results.NotFound(new { message = "This booking is no longer available to move." });
+        if (rows.IsDBNull(0))
+            return Results.BadRequest(new { message = "Choose a different bay or hour on the same day." });
+        return Results.Json(new Booking(rows.GetInt64(0), rows.GetInt16(1), rows.GetInt16(2), rows.GetString(3)), statusCode: 201);
+    }
+    catch (PostgresException exception) when (exception.SqlState is PostgresErrorCodes.UniqueViolation or PostgresErrorCodes.DeadlockDetected)
+    {
+        return Results.Conflict(new { message = "This slot was just booked. Choose another time." });
+    }
 });
 
 app.MapDelete("/api/bookings/{id:long}", async Task<IResult> (long id, HttpContext context, CancellationToken cancellation) =>
@@ -149,4 +205,5 @@ app.MapDelete("/api/bookings/{id:long}", async Task<IResult> (long id, HttpConte
 await app.RunAsync();
 
 record BookingRequest(DateOnly Date, int Bay, int Hour, string? Reference);
+record MoveRequest(DateOnly Date, int Bay, int Hour);
 record Booking(long Id, int Bay, int Hour, string Reference);

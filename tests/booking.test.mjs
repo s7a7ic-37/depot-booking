@@ -7,6 +7,12 @@ if (origin.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes
   throw new Error("Run booking checks against a dedicated loopback test service.");
 }
 
+function dayAfter(date, days) {
+  const next = new Date(date + "T12:00:00Z");
+  next.setUTCDate(next.getUTCDate() + days);
+  return next.toISOString().slice(0, 10);
+}
+
 function workspace() {
   let cookie = "";
   return {
@@ -30,6 +36,15 @@ function workspace() {
         body: JSON.stringify(booking),
       });
     },
+    async move(id, target) {
+      const response = await fetch(new URL("/api/bookings/" + id + "/move", origin), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Origin: origin.origin, Cookie: cookie },
+        body: JSON.stringify(target),
+      });
+      assert.equal(response.headers.get("Cache-Control"), "no-store");
+      return response;
+    },
     cancel(id) {
       return fetch(new URL("/api/bookings/" + id, origin), {
         method: "DELETE",
@@ -42,9 +57,7 @@ function workspace() {
 test("simultaneous requests for one slot save exactly one booking", async () => {
   const client = workspace();
   const initial = await client.read();
-  const tomorrow = new Date(initial.firstDay + "T12:00:00Z");
-  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-  const board = await client.read(tomorrow.toISOString().slice(0, 10));
+  const board = await client.read(dayAfter(initial.firstDay, 1));
   const hour = Array.from({ length: board.lastHour - board.firstHour + 1 }, (_, i) => board.firstHour + i)
     .find((slot) => !board.bookings.some((booking) => booking.bay === 1 && booking.hour === slot));
   assert.ok(hour, "Use a fresh test database with an available slot");
@@ -79,4 +92,54 @@ test("invalid date, bay, hour and reference leave the board unchanged", async ()
     assert.equal((await client.reserve({ ...booking, ...overrides })).status, 400);
   }
   assert.deepEqual((await client.read(board.date)).bookings, board.bookings);
+});
+
+test("concurrent moves to one slot keep the losing booking and invalidate the winning source ID", async () => {
+  const client = workspace();
+  const initial = await client.read();
+  const date = dayAfter(initial.firstDay, 1);
+  const originals = [];
+  for (const [offset, reference] of [[0, "MOVE-FIRST"], [1, "MOVE-SECOND"]]) {
+    const response = await client.reserve({ date, bay: 1, hour: initial.firstHour + offset, reference });
+    assert.equal(response.status, 201);
+    originals.push(await response.json());
+  }
+
+  const target = { date, bay: 2, hour: initial.firstHour };
+  const moves = await Promise.all(originals.map(booking => client.move(booking.id, target)));
+  assert.deepEqual(moves.map(response => response.status).sort(), [201, 409]);
+  const winnerIndex = moves.findIndex(response => response.status === 201);
+  const winner = originals[winnerIndex];
+  const remaining = originals[1 - winnerIndex];
+  const moved = await moves[winnerIndex].json();
+  assert.notEqual(moved.id, winner.id);
+  assert.deepEqual(moved, { id: moved.id, bay: target.bay, hour: target.hour, reference: winner.reference });
+  assert.deepEqual((await client.read(date)).bookings, [remaining, moved]);
+
+  assert.equal((await client.cancel(winner.id)).status, 404);
+  assert.equal((await client.move(winner.id, { ...target, bay: 3 })).status, 404);
+  assert.deepEqual((await client.read(date)).bookings, [remaining, moved]);
+  assert.equal((await client.cancel(moved.id)).status, 204);
+  assert.equal((await client.cancel(remaining.id)).status, 204);
+});
+
+test("a same-day move rejects invalid, unchanged and foreign targets without changing the booking", async () => {
+  const client = workspace();
+  const visitor = workspace();
+  const initial = await client.read();
+  const date = dayAfter(initial.firstDay, 1);
+  const slot = { date, bay: 1, hour: initial.firstHour };
+  const response = await client.reserve({ ...slot, reference: "MOVE-VALIDATION" });
+  assert.equal(response.status, 201);
+  const original = await response.json();
+  const target = { ...slot, bay: 2 };
+
+  assert.equal((await workspace().move(original.id, target)).status, 401);
+  await visitor.read(date);
+  assert.equal((await visitor.move(original.id, target)).status, 404);
+  for (const invalid of [slot, { ...target, date: dayAfter(date, 1) }, { ...target, bay: 4 }, { ...target, hour: 22 }]) {
+    assert.equal((await client.move(original.id, invalid)).status, 400);
+  }
+  assert.deepEqual((await client.read(date)).bookings, [original]);
+  assert.equal((await client.cancel(original.id)).status, 204);
 });

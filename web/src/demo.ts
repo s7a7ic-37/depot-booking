@@ -1,5 +1,6 @@
 export type Booking = { id: number | string; bay: number; hour: number; reference: string };
-export type BookingInput = Omit<Booking, "id"> & { date: string };
+export type Slot = Pick<Booking, "bay" | "hour"> & { date: string };
+export type BookingInput = Slot & Pick<Booking, "reference">;
 export type Board = {
   date: string;
   firstDay: string;
@@ -48,6 +49,11 @@ function openDatabase() {
   });
 }
 
+function available(board: ReturnType<typeof schedule>, bay: number, hour: number) {
+  return Number.isInteger(bay) && bay >= 1 && bay <= bayCount &&
+    Number.isInteger(hour) && hour >= board.availableFrom && hour <= lastHour;
+}
+
 export async function demoBoard(date?: string): Promise<Board> {
   const board = schedule(date);
   const db = await openDatabase();
@@ -67,8 +73,7 @@ export async function demoBoard(date?: string): Promise<Board> {
 export async function demoReserve(input: BookingInput): Promise<Response> {
   const { date, bay, hour } = input;
   const board = schedule(date);
-  if (!Number.isInteger(bay) || bay < 1 || bay > bayCount ||
-      !Number.isInteger(hour) || hour < board.availableFrom || hour > lastHour) {
+  if (!available(board, bay, hour)) {
     return Response.json({ message: "Choose an available bay and hour." }, { status: 400 });
   }
   const reference = input.reference.trim();
@@ -84,6 +89,37 @@ export async function demoReserve(input: BookingInput): Promise<Response> {
       transaction.oncomplete = () => resolve(Response.json(booking, { status: 201 }));
       transaction.onabort = () => request.error?.name === "ConstraintError"
         ? resolve(Response.json({ message: "This slot was just booked. Choose another time." }, { status: 409 }))
+        : reject(transaction.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+export async function demoMove({ date, bay, hour }: Slot, booking: Booking): Promise<Response> {
+  const board = schedule(date);
+  if (!available(board, bay, hour) || (bay === booking.bay && hour === booking.hour)) {
+    return Response.json({ message: "Choose a different available bay or hour." }, { status: 400 });
+  }
+
+  const db = await openDatabase();
+  try {
+    return await new Promise<Response>((resolve, reject) => {
+      const transaction = db.transaction("bookings", "readwrite");
+      const store = transaction.objectStore("bookings");
+      const key = [date, booking.bay, booking.hour];
+      const lookup = store.get(key);
+      let moved: Booking | undefined;
+      lookup.onsuccess = () => {
+        const previous = lookup.result;
+        if (previous?.id !== booking.id || booking.hour < board.availableFrom) return;
+        moved = { id: crypto.randomUUID(), bay, hour, reference: previous.reference };
+        store.add({ ...moved, date });
+        store.delete(key);
+      };
+      transaction.oncomplete = () => resolve(moved ? Response.json(moved, { status: 201 }) : new Response(null, { status: 404 }));
+      transaction.onabort = () => transaction.error?.name === "ConstraintError"
+        ? resolve(new Response(null, { status: 409 }))
         : reject(transaction.error);
     });
   } finally {

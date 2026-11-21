@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { createRoot } from "react-dom/client";
-import { demoBoard, demoCancel, demoReserve } from "./demo";
-import type { Board, Booking, BookingInput } from "./demo";
+import { demoBoard, demoCancel, demoMove, demoReserve } from "./demo";
+import type { Board, Booking, BookingInput, Slot } from "./demo";
 import "./style.css";
 
 const browserDemo = import.meta.env.MODE === "demo";
@@ -35,9 +35,8 @@ async function getBoard(date = ""): Promise<Board> {
   return response.json();
 }
 
-function saveBooking(input: BookingInput) {
-  if (browserDemo) return demoReserve(input);
-  return fetch("/api/bookings", {
+function postBooking(path: string, input: BookingInput | Slot) {
+  return fetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
@@ -50,6 +49,7 @@ function App() {
   const [bay, setBay] = useState(1);
   const [hour, setHour] = useState<number | null>(null);
   const [reference, setReference] = useState("");
+  const [moving, setMoving] = useState<Booking | null>(null);
   const [busy, setBusy] = useState(true);
   const [message, setMessage] = useState("");
   const [failed, setFailed] = useState(false);
@@ -61,6 +61,7 @@ function App() {
     try {
       setBoard(await getBoard(date));
       setHour(null);
+      setMoving(null);
       setMessage("");
     } catch {
       setFailed(true);
@@ -72,25 +73,39 @@ function App() {
 
   useEffect(() => { void loadSchedule(); }, []);
 
-  async function reserve(event: FormEvent<HTMLFormElement>) {
+  async function submitBooking(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy || !board || hour === null) return;
     setBusy(true);
     setFailed(false);
-    setMessage("Saving booking…");
+    setMessage(moving ? "Moving booking…" : "Saving booking…");
     try {
-      const response = await saveBooking({ date: board.date, bay, hour, reference });
-      if (response.status === 409) {
+      const slot = { date: board.date, bay, hour };
+      const input = { ...slot, reference };
+      const response = moving
+        ? await (browserDemo ? demoMove(slot, moving) : postBooking(`/api/bookings/${moving.id}/move`, slot))
+        : await (browserDemo ? demoReserve(input) : postBooking("/api/bookings", input));
+      if (response.status === 409 || (moving && response.status === 404)) {
         setFailed(true);
         setHour(null);
-        setMessage("This slot was just booked. Choose another time.");
-        setBoard(await getBoard(board.date));
+        const current = await getBoard(board.date);
+        setBoard(current);
+        if (moving && (response.status === 404 || !current.bookings.some((row) => row.id === moving.id))) {
+          setMoving(null);
+          setMessage("The original booking is no longer available to move. The schedule has been refreshed.");
+        } else {
+          setMessage(moving ? "That slot is taken. Your original booking is still in place." : "This slot was just booked. Choose another time.");
+        }
       } else if (response.ok) {
         const saved: Booking = await response.json();
-        setBoard({ ...board, bookings: [...board.bookings, saved] });
-        setMessage("Booked bay " + saved.bay + " at " + clockLabel(saved.hour) + " for " + saved.reference + ".");
+        const remaining = moving ? board.bookings.filter((row) => row.id !== moving.id) : board.bookings;
+        setBoard({ ...board, bookings: [...remaining, saved] });
+        setMessage(moving
+          ? `Moved ${saved.reference} to bay ${saved.bay} at ${clockLabel(saved.hour)}.`
+          : `Booked bay ${saved.bay} at ${clockLabel(saved.hour)} for ${saved.reference}.`);
         setHour(null);
-        setReference("");
+        setMoving(null);
+        if (!moving) setReference("");
       } else {
         const error = await response.json().catch(() => null);
         setFailed(true);
@@ -102,6 +117,15 @@ function App() {
     } finally {
       setBusy(false);
     }
+  }
+
+  function startMove(booking: Booking) {
+    setMoving(booking);
+    setBay(booking.bay);
+    setHour(null);
+    setFailed(false);
+    setMessage("Choose a different bay or time, then confirm the move.");
+    document.getElementById("slots-heading")?.focus();
   }
 
   async function cancel(booking: Booking) {
@@ -165,7 +189,7 @@ function App() {
                 onClick={() => { setBay(number); setHour(null); }}>Bay {number}</button>
             )}
           </div>
-          <h2 id="slots-heading">Time slots</h2>
+          <h2 id="slots-heading" tabIndex={-1}>Time slots</h2>
           <p className="schedule-date">{dayLabel.format(new Date(board.date + "T00:00:00Z"))} · UK time</p>
           <div className="slots">
             {hours.map((time) => {
@@ -178,22 +202,37 @@ function App() {
             })}
           </div>
         </section>
-        <form className="panel booking-form" onSubmit={reserve}>
-          <h2>Reserve a slot</h2>
+        <form className="panel booking-form" onSubmit={submitBooking}>
+          <h2>{moving ? "Move booking" : "Reserve a slot"}</h2>
+          {moving && <p className="selection">{moving.reference} · Now bay {moving.bay} at {clockLabel(moving.hour)}</p>}
           <p className="selection">{selection}</p>
-          <label htmlFor="reference">Load reference</label>
-          <input id="reference" name="reference" placeholder="e.g. LOAD-104" maxLength={32} required
-            value={reference} disabled={busy} onChange={(event) => setReference(event.target.value)} />
-          <button className="primary" disabled={busy || hour === null || !reference.trim()}>Reserve slot</button>
+          {!moving && <><label htmlFor="reference">Load reference</label>
+            <input id="reference" name="reference" placeholder="e.g. LOAD-104" maxLength={32} required
+              value={reference} disabled={busy} onChange={(event) => setReference(event.target.value)} /></>}
+          <button className="primary" disabled={busy || hour === null || (!moving && !reference.trim())}>
+            {moving ? "Confirm move" : "Reserve slot"}
+          </button>
+          {moving && <button className="keep-booking" type="button" disabled={busy} onClick={() => {
+            setMoving(null);
+            setHour(null);
+            setFailed(false);
+            setMessage("Your booking is unchanged.");
+            document.getElementById("slots-heading")?.focus();
+          }}>Keep current booking</button>}
         </form>
         {bookings.length > 0 && <section className="panel bookings" aria-labelledby="bookings-heading">
           <h2 id="bookings-heading">Bookings for this day</h2>
           <ul>
             {bookings.map((booking) => <li key={booking.id}>
               <span><strong>{booking.reference}</strong><small>Bay {booking.bay} · {clockLabel(booking.hour)}</small></span>
-              {booking.hour >= board.availableFrom && <button type="button" disabled={busy}
-                aria-label={"Cancel bay " + booking.bay + " at " + clockLabel(booking.hour)}
-                onClick={() => void cancel(booking)}>Cancel</button>}
+              {booking.hour >= board.availableFrom && <div className="booking-actions">
+                <button type="button" disabled={busy || moving !== null}
+                  aria-label={"Move bay " + booking.bay + " at " + clockLabel(booking.hour)}
+                  onClick={() => startMove(booking)}>Move</button>
+                <button type="button" disabled={busy || moving !== null}
+                  aria-label={"Cancel bay " + booking.bay + " at " + clockLabel(booking.hour)}
+                  onClick={() => void cancel(booking)}>Cancel</button>
+              </div>}
             </li>)}
           </ul>
         </section>}

@@ -5,6 +5,7 @@ Book an hour at one of three loading bays. The full stack version uses React, AS
 [Try the browser demo](https://depot.artemislab.co.uk/). Demo bookings stay in IndexedDB. The unique slot key demonstrates the same conflict in two tabs without a server account.
 
 Future bookings can be cancelled and booked again. Cancellation checks the booking ID so an older tab cannot cancel a replacement.
+Move a booking to a different slot on the same day. If the new slot is taken, the original reservation stays in place. A successful move gives the replacement its own ID.
 
 Download the displayed day's bookings across all bays as CSV. Rows are sorted by bay and UK start time. The export includes the date, bay, start time and load reference.
 

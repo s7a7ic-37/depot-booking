@@ -93,3 +93,49 @@ test("day CSV includes every bay in order and protects spreadsheet references", 
     await isolated.close();
   }
 });
+
+test("two tabs moving to one slot preserve the booking that loses the conflict", async ({ page, context }) => {
+  await page.goto("/");
+  const date = page.getByLabel("Booking date");
+  const day = await dateAfter(date, 1);
+  await date.fill(day);
+  await book(page, "Bay 1, 08:00", "FIRST");
+  await book(page, "Bay 1, 10:00", "SECOND");
+
+  const other = await context.newPage();
+  await other.goto("/");
+  await other.getByLabel("Booking date").fill(day);
+  await expect(other.getByText("SECOND", { exact: true })).toBeVisible();
+
+  const moveFirst = page.getByRole("button", { name: "Move bay 1 at 08:00" });
+  await moveFirst.click();
+  await expect(page.getByRole("heading", { name: "Time slots" })).toBeFocused();
+  await expect(page.getByRole("button", { name: "Confirm move" })).toBeDisabled();
+  await page.getByRole("button", { name: "Keep current booking" }).click();
+  await expect(page.getByRole("status")).toContainText("Your booking is unchanged.");
+  await expect(moveFirst).toBeEnabled();
+
+  await moveFirst.click();
+  await other.getByRole("button", { name: "Move bay 1 at 10:00" }).click();
+  for (const tab of [page, other]) {
+    await tab.getByRole("button", { name: "Bay 2", exact: true }).click();
+    await tab.getByRole("button", { name: "Bay 2, 09:00, Available" }).click();
+  }
+  await Promise.all([page, other].map(tab => tab.getByRole("button", { name: "Confirm move" }).click()));
+  await expect.poll(async () => {
+    const statuses = await Promise.all([page, other].map(tab => tab.getByRole("status").textContent()));
+    return statuses.filter(message => /^(Moved |That slot is taken)/.test(message)).length;
+  }).toBe(2);
+  const pageWon = (await page.getByRole("status").textContent()).startsWith("Moved FIRST");
+  const winner = pageWon ? page : other;
+  const loser = pageWon ? other : page;
+  await expect(winner.getByRole("status")).toContainText("to bay 2 at 09:00.");
+  await expect(loser.getByRole("status")).toContainText("Your original booking is still in place.");
+
+  await page.getByRole("button", { name: "Refresh schedule" }).click();
+  const bookings = page.getByRole("region", { name: "Bookings for this day" }).getByRole("listitem");
+  await expect(bookings).toHaveCount(2);
+  await expect(bookings.filter({ hasText: pageWon ? "FIRST" : "SECOND" })).toContainText("Bay 2 · 09:00");
+  await expect(bookings.filter({ hasText: pageWon ? "SECOND" : "FIRST" })).toContainText(pageWon ? "Bay 1 · 10:00" : "Bay 1 · 08:00");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth === innerWidth)).toBe(true);
+});
