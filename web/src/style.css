@@ -52,4 +52,5 @@ button[aria-pressed="true"], .primary:enabled { border-color: var(--accent); bac
 .booking-form input, .booking-form .primary { width: 100%; }
 .booking-form label { margin-top: 1.15rem; }
 .booking-form .primary { margin-top: .75rem; }
+footer { padding-block: 1rem 1.5rem; }
 @media (max-width: 720px) { .layout { grid-template-columns: minmax(0, 1fr); } }

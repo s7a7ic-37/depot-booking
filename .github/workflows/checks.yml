@@ -1,0 +1,49 @@
+name: Depot checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: depot
+          POSTGRES_DB: depot_booking_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U depot -d depot_booking_test"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --prefix web
+      - run: npm run build:demo --prefix web
+      - run: docker build --tag depot-test .
+      - name: Verify PostgreSQL booking API
+        env:
+          ConnectionStrings__Depot: Host=127.0.0.1;Database=depot_booking_test;Username=depot
+          SiteOrigin: http://127.0.0.1:4186
+        run: |
+          docker run --detach --name depot-api --network host \
+            -e ConnectionStrings__Depot -e SiteOrigin \
+            -e ASPNETCORE_HTTP_PORTS=4186 depot-test
+          for attempt in {1..30}; do
+            if curl --fail --silent --output /dev/null http://127.0.0.1:4186/api/board; then break; fi
+            sleep 1
+          done
+          node --test tests/booking.test.mjs
+      - name: Print server logs on failure
+        if: failure()
+        run: docker logs depot-api || true

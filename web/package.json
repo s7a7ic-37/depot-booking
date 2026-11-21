@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build": "tsc --noEmit && vite build --outDir ../api/wwwroot --emptyOutDir"
+    "build": "tsc --noEmit && vite build --outDir ../api/wwwroot --emptyOutDir",
+    "build:demo": "tsc --noEmit && vite build --mode demo"
   },
   "dependencies": {
     "react": "19.3.1",

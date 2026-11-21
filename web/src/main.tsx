@@ -1,28 +1,30 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { createRoot } from "react-dom/client";
+import { demoBoard, demoReserve } from "./demo";
+import type { Board, Booking, BookingInput } from "./demo";
 import "./style.css";
 
-type Booking = { id: number; bay: number; hour: number; reference: string };
-type Board = {
-  date: string;
-  firstDay: string;
-  lastDay: string;
-  bayCount: number;
-  firstHour: number;
-  lastHour: number;
-  availableFrom: number;
-  bookings: Booking[];
-};
-
+const browserDemo = import.meta.env.MODE === "demo";
 const clockLabel = (hour: number) => String(hour).padStart(2, "0") + ":00";
 const dayLabel = new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "short", timeZone: "UTC" });
 
 async function getBoard(date = ""): Promise<Board> {
+  if (browserDemo) return demoBoard(date);
   const params = date ? "?" + new URLSearchParams({ date }) : "";
   const response = await fetch("/api/board" + params, { cache: "no-store", signal: AbortSignal.timeout(10_000) });
   if (!response.ok) throw new Error("Could not load the schedule.");
   return response.json();
+}
+
+function saveBooking(input: BookingInput) {
+  if (browserDemo) return demoReserve(input);
+  return fetch("/api/bookings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+    signal: AbortSignal.timeout(10_000),
+  });
 }
 
 function App() {
@@ -59,12 +61,7 @@ function App() {
     setFailed(false);
     setMessage("Saving booking…");
     try {
-      const response = await fetch("/api/bookings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ date: board.date, bay, hour, reference }),
-        signal: AbortSignal.timeout(10_000),
-      });
+      const response = await saveBooking({ date: board.date, bay, hour, reference });
       if (response.status === 409) {
         setFailed(true);
         setHour(null);
@@ -101,7 +98,7 @@ function App() {
     <main className="wrap">
       <div className="intro">
         <h1>Loading bay schedule</h1>
-        <p>Reserve an hour for a delivery or collection.</p>
+        <p>{browserDemo ? "Browser demo · Sample bookings stay in this browser." : "Reserve an hour for a delivery or collection."}</p>
       </div>
       <p className="message" role="status" data-failed={failed}>{message || (busy ? "Loading schedule…" : "")}</p>
       {!board && !busy && <button type="button" onClick={() => void loadSchedule()}>Retry schedule</button>}
@@ -143,6 +140,7 @@ function App() {
         </form>
       </div>}
     </main>
+    <footer className="wrap"><a href="https://github.com/s7a7ic-37/depot-booking">Project source ↗</a></footer>
   </>;
 }
 

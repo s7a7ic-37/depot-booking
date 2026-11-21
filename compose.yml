@@ -1,0 +1,26 @@
+services:
+  app:
+    build: .
+    environment:
+      ConnectionStrings__Depot: "Host=db;Database=depot_booking;Username=depot;Password=${DEPOT_DB_PASSWORD:?Set DEPOT_DB_PASSWORD in a local .env file}"
+      SiteOrigin: http://localhost:4186
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:4186:8080"
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: depot
+      POSTGRES_DB: depot_booking
+      POSTGRES_PASSWORD: "${DEPOT_DB_PASSWORD:?Set DEPOT_DB_PASSWORD in a local .env file}"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "depot", "-d", "depot_booking"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    volumes:
+      - db:/var/lib/postgresql/data
+volumes:
+  db:
