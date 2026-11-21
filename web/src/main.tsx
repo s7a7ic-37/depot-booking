@@ -44,6 +44,8 @@ function postBooking(path: string, input: BookingInput | Slot) {
   });
 }
 
+type FocusRecovery = { trigger: HTMLElement; targetId?: string };
+
 function App() {
   const [board, setBoard] = useState<Board | null>(null);
   const [bay, setBay] = useState(1);
@@ -53,7 +55,7 @@ function App() {
   const [busy, setBusy] = useState(true);
   const [message, setMessage] = useState("");
   const [failed, setFailed] = useState(false);
-  const focusAfterChange = useRef<HTMLButtonElement | string | null>(null);
+  const focusAfterChange = useRef<FocusRecovery | null>(null);
 
   async function loadSchedule(date?: string) {
     setBusy(true);
@@ -75,14 +77,17 @@ function App() {
   useEffect(() => { void loadSchedule(); }, []);
 
   useEffect(() => {
-    const target = focusAfterChange.current;
-    if (busy || !target) return;
+    const recovery = focusAfterChange.current;
+    if (busy || !recovery) return;
     focusAfterChange.current = null;
-    if (document.activeElement !== document.body) return;
-    if (typeof target === "string") {
-      document.getElementById(target)?.focus();
-    } else if (target.isConnected) {
-      target.focus();
+    const { trigger, targetId } = recovery;
+    const active = document.activeElement;
+    // A browser can keep the disabled trigger focused until after this effect.
+    if (active !== document.body && active !== trigger) return;
+    if (targetId) {
+      document.getElementById(targetId)?.focus();
+    } else if (trigger.isConnected) {
+      trigger.focus();
     } else {
       const heading = document.getElementById("bookings-heading") ?? document.getElementById("slots-heading");
       heading?.focus();
@@ -92,8 +97,11 @@ function App() {
   async function submitBooking(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy || !board || hour === null) return;
-    const restoreReserveFocus = !moving && event.currentTarget.contains(document.activeElement);
-    if (restoreReserveFocus) focusAfterChange.current = "reference";
+    const trigger = document.activeElement;
+    const recovery: FocusRecovery | null = !moving && trigger instanceof HTMLElement && event.currentTarget.contains(trigger)
+      ? { trigger, targetId: "reference" }
+      : null;
+    focusAfterChange.current = recovery;
     setBusy(true);
     setFailed(false);
     setMessage(moving ? "Moving booking…" : "Saving booking…");
@@ -106,7 +114,7 @@ function App() {
       if (response.status === 409 || (moving && response.status === 404)) {
         setFailed(true);
         setHour(null);
-        if (restoreReserveFocus) focusAfterChange.current = "slots-heading";
+        if (recovery) recovery.targetId = "slots-heading";
         const current = await getBoard(board.date);
         setBoard(current);
         if (moving && (response.status === 404 || !current.bookings.some((row) => row.id === moving.id))) {
@@ -117,7 +125,7 @@ function App() {
         }
       } else if (response.ok) {
         const saved: Booking = await response.json();
-        if (restoreReserveFocus) focusAfterChange.current = "bookings-heading";
+        if (recovery) recovery.targetId = "bookings-heading";
         const remaining = moving ? board.bookings.filter((row) => row.id !== moving.id) : board.bookings;
         setBoard({ ...board, bookings: [...remaining, saved] });
         setMessage(moving
@@ -152,7 +160,7 @@ function App() {
     if (busy || !board) return;
     const wasFocused = document.activeElement === trigger;
     if (!window.confirm("Cancel bay " + booking.bay + " at " + clockLabel(booking.hour) + "?")) return;
-    focusAfterChange.current = wasFocused ? trigger : null;
+    focusAfterChange.current = wasFocused ? { trigger } : null;
     setBusy(true);
     setFailed(false);
     setMessage("Cancelling booking…");
