@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { createRoot } from "react-dom/client";
 import { demoBoard, demoCancel, demoMove, demoReserve } from "./demo";
@@ -53,6 +53,7 @@ function App() {
   const [busy, setBusy] = useState(true);
   const [message, setMessage] = useState("");
   const [failed, setFailed] = useState(false);
+  const cancelFocus = useRef<HTMLButtonElement | null>(null);
 
   async function loadSchedule(date?: string) {
     setBusy(true);
@@ -72,6 +73,17 @@ function App() {
   }
 
   useEffect(() => { void loadSchedule(); }, []);
+
+  useEffect(() => {
+    const trigger = cancelFocus.current;
+    if (busy || !trigger) return;
+    cancelFocus.current = null;
+    if (document.activeElement !== document.body) return;
+    const target = trigger.isConnected
+      ? trigger
+      : document.getElementById("bookings-heading") ?? document.getElementById("slots-heading");
+    target?.focus();
+  }, [board, busy]);
 
   async function submitBooking(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -128,8 +140,11 @@ function App() {
     document.getElementById("slots-heading")?.focus();
   }
 
-  async function cancel(booking: Booking) {
-    if (busy || !board || !window.confirm("Cancel bay " + booking.bay + " at " + clockLabel(booking.hour) + "?")) return;
+  async function cancel(booking: Booking, trigger: HTMLButtonElement) {
+    if (busy || !board) return;
+    const wasFocused = document.activeElement === trigger;
+    if (!window.confirm("Cancel bay " + booking.bay + " at " + clockLabel(booking.hour) + "?")) return;
+    cancelFocus.current = wasFocused ? trigger : null;
     setBusy(true);
     setFailed(false);
     setMessage("Cancelling booking…");
@@ -221,7 +236,7 @@ function App() {
           }}>Keep current booking</button>}
         </form>
         {bookings.length > 0 && <section className="panel bookings" aria-labelledby="bookings-heading">
-          <h2 id="bookings-heading">Bookings for this day</h2>
+          <h2 id="bookings-heading" tabIndex={-1}>Bookings for this day</h2>
           <ul>
             {bookings.map((booking) => <li key={booking.id}>
               <span><strong>{booking.reference}</strong><small>Bay {booking.bay} · {clockLabel(booking.hour)}</small></span>
@@ -231,7 +246,7 @@ function App() {
                   onClick={() => startMove(booking)}>Move</button>
                 <button type="button" disabled={busy || moving !== null}
                   aria-label={"Cancel bay " + booking.bay + " at " + clockLabel(booking.hour)}
-                  onClick={() => void cancel(booking)}>Cancel</button>
+                  onClick={(event) => void cancel(booking, event.currentTarget)}>Cancel</button>
               </div>}
             </li>)}
           </ul>

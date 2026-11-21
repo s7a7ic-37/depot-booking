@@ -48,6 +48,26 @@ test("a replacement booking survives cancellation from a stale phone tab", async
   expect(apiRequests).toEqual([]);
 });
 
+test("keyboard cancellation keeps focus in the schedule at 320px", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.goto("/");
+  const date = page.getByLabel("Booking date");
+  await date.fill(await dateAfter(date, 1));
+  await book(page, "Bay 1, 08:00", "FIRST");
+  await book(page, "Bay 1, 09:00", "SECOND");
+
+  for (const [hour, heading] of [["08:00", "Bookings for this day"], ["09:00", "Time slots"]]) {
+    const button = page.getByRole("button", { name: "Cancel bay 1 at " + hour, exact: true });
+    await button.focus();
+    page.once("dialog", dialog => dialog.accept());
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("status")).toContainText("Booking cancelled.");
+    await expect(button).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: heading })).toBeFocused();
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
+});
+
 test("day CSV includes every bay in order and protects spreadsheet references", async ({ page, browser, baseURL }) => {
   await page.goto("/");
   const date = page.getByLabel("Booking date");
