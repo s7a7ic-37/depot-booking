@@ -57,7 +57,8 @@ function App() {
   const [failed, setFailed] = useState(false);
   const focusAfterChange = useRef<FocusRecovery | null>(null);
 
-  async function loadSchedule(date?: string) {
+  async function loadSchedule(date?: string, trigger?: HTMLElement) {
+    focusAfterChange.current = trigger && document.activeElement === trigger ? { trigger } : null;
     setBusy(true);
     setFailed(false);
     setMessage("Loading schedule…");
@@ -206,10 +207,10 @@ function App() {
           <div className="date-line">
             <div><label htmlFor="date">Booking date</label>
               <input id="date" type="date" value={board.date} min={board.firstDay} max={board.lastDay}
-                disabled={busy} onChange={(event) => { if (event.target.value) void loadSchedule(event.target.value); }} />
+                disabled={busy} onChange={(event) => { if (event.currentTarget.value) void loadSchedule(event.currentTarget.value, event.currentTarget); }} />
             </div>
             <div className="schedule-actions">
-              <button type="button" disabled={busy} onClick={() => void loadSchedule(board.date)}>Refresh schedule</button>
+              <button type="button" disabled={busy} onClick={(event) => void loadSchedule(board.date, event.currentTarget)}>Refresh schedule</button>
               <button type="button" disabled={busy || bookings.length === 0}
                 onClick={() => downloadDay(board.date, bookings)}>Download day CSV</button>
             </div>
