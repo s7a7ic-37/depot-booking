@@ -33,6 +33,8 @@ With the app running against a separate loopback test database, run the checks f
 
     node --test tests/booking.test.mjs
 
+With Chromium and WebKit installed, set `DEPOT_LIVE_URL` to `http://127.0.0.1:4186` for the local full stack or `https://depot-live.artemislab.co.uk` after that deployment. Run `node tests/live-booking.mjs` from `web`. The smoke check races two tabs, checks the conflict and the one saved booking after reload, then cancels the test booking. It uses a new browser workspace for each viewport.
+
 ## Render deployment
 
 1. Use a Render Docker web service on the Free plan and a separate database in a Neon Free project. Confirm free usage is available before creating either resource.

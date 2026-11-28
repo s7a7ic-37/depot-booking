@@ -52,6 +52,11 @@ jobs:
             sleep 1
           done
           node --test tests/booking.test.mjs
+      - name: Check two browsers against the database-backed app
+        working-directory: web
+        env:
+          DEPOT_LIVE_URL: http://127.0.0.1:4186
+        run: node tests/live-booking.mjs
       - name: Print server logs on failure
         if: failure()
         run: docker logs depot-api || true
